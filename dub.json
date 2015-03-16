@@ -1,0 +1,11 @@
+{
+    "name": "dgeo",
+    "targetType": "sourceLibrary",
+    "description": "A D geometry library designed for video games.",
+    "authors": ["w0rp"],
+    "homepage": "https://github.com/w0rp/dgeo",
+    "license": "BSD 2-clause",
+    "copyright": "Copyright © 2015, w0rp",
+    "dependencies":{
+    }
+}
