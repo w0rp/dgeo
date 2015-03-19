@@ -3,135 +3,17 @@ module dgeo.point;
 import core.simd;
 static import std.math;
 
-// This flag can be changed for testing the code without SIMD.
-private enum disableSIMD = false;
-
-// Credit to the exact versions to check goes to Manu Evans for the std.simd
-// which never arrived.
-static if (disableSIMD) {
-    version = NoSIMD;
-} else {
-    version(X86) {
-        version(DigitalMars) {
-            // DMD-x86 does not support SIMD
-            version = NoSIMD;
-        } else {
-            version = SIMD_X86_OR_X64;
-        }
-    } else version(X86_64) {
-        version = SIMD_X86_OR_X64;
-    } else {
-        // Disable SIMD for architectures we haven't tested.
-        version = NoSIMD;
-    }
-}
-
-version(NoSIMD) {
-    /**
-     * Construct a scalar value for use in point or vector calculations in
-     * an efficient manner, such that it will work with or without SIMD
-     * support.
-     */
-    enum float Scalar(float value) = value;
-} else {
-    version = SIMD;
-
-    /**
-     * Construct a scalar value for use in point or vector calculations in
-     * an efficient manner, such that it will work with or without SIMD
-     * support.
-     */
-    enum float4 Scalar(float value) = [value, value, value, 1];
-
-    @safe pure nothrow @nogc
-    private float4 shuffle(ubyte mask)(float4 value) {
-        return __simd(XMM.SHUFPS, value, value, mask);
-    }
-
-    /// Load a float into all elements of a float4 vector.
-    @safe pure nothrow @nogc
-    private float4 loadScalar(float value) {
-        // Load a scalar into the first element.
-        auto vec = __simd(XMM.LODSS, value);
-
-        // Shuffle everything around so the scalar ends up in all elements.
-        return shuffle!0b00_00_00_00(vec);
-    }
-}
-
 private mixin template CommonDataAndTypes(T) {
-    version(SIMD_X86_OR_X64) {
-        package union {
-            // Set the w value in the vector always appropriately
-            // for homogenous co-ordinates.
-            static if(is(T == Point)) {
-                float4 xyzw = [0, 0, 0, 0];
-            } else {
-                float4 xyzw = [0, 0, 0, 1];
-            }
+    float x = 0f;
+    float y = 0f;
+    float z = 0f;
 
-            float[4] xyzwArray;
-        }
-
-        @safe pure nothrow @nogc
-        @property float x() const {
-            return xyzwArray[0];
-        }
-
-        @safe pure nothrow @nogc
-        @property void x(float value) {
-            xyzwArray[0] = value;
-        }
-
-        @safe pure nothrow @nogc
-        @property float y() const {
-            return xyzwArray[1];
-        }
-
-        @safe pure nothrow @nogc
-        @property void y(float value) {
-            xyzwArray[1] = value;
-        }
-
-        @safe pure nothrow @nogc
-        @property float z() const {
-            return xyzwArray[2];
-        }
-
-        @safe pure nothrow @nogc
-        @property void z(float value) {
-            xyzwArray[2] = value;
-        }
-
-        // Reset the w co-ordinate. This should be called after setting
-        // the vector value directly to keep the w co-ordinate normalised
-        // so the vector can be used in homogeneous co-ordinates.
-        @safe pure nothrow @nogc
-        package void resetW() {
-            static if(is(T == Point)) {
-                this.xyzwArray[3] = 0f;
-            } else {
-                this.xyzwArray[3] = 1f;
-            }
-        }
-
-        @safe pure nothrow @nogc
-        package this(float4 xyzw) {
-            this.xyzw = xyzw;
-            this.resetW();
-        }
+    // To keep the padding for the struct always the same, add in
+    // a fourth float value for homogeneous coordinates.
+    static if(is(T == Point)) {
+        private float w = 0f;
     } else {
-        float x = 0f;
-        float y = 0f;
-        float z = 0f;
-
-        // To keep the padding for the struct always the same, add in
-        // a fourth float value for homogeneous coordinates.
-        static if(is(T == Point)) {
-            private immutable float w = 0f;
-        } else {
-            private immutable float w = 1f;
-        }
+        private float w = 1f;
     }
 
     /// Construct a point or vector with some co-ordinates.
@@ -143,23 +25,11 @@ private mixin template CommonDataAndTypes(T) {
     }
 
     /// Test if two points or two vectors are equal.
-    @trusted pure nothrow @nogc
+    @safe pure nothrow @nogc
     bool opEquals(in T other) const {
-        version(SIMD_X86_OR_X64) {
-            enum EQ = 0;
-            enum ulong[2] allOnes = [ulong.max, ulong.max];
-
-            // Execute the SIMD equality instruction.
-            auto vecResult = __simd(XMM.CMPPS, this.xyzw, other.xyzw, EQ);
-
-            // If the two values are equal, then all bits of the result
-            // will be set to 1.
-            return *(cast(ulong[2]*)(&vecResult)) == allOnes;
-        } else {
-            return this.x == other.x
-                && this.y == other.y
-                && this.z == other.z;
-        }
+        return this.x == other.x
+            && this.y == other.y
+            && this.z == other.z;
     }
 }
 
@@ -174,29 +44,13 @@ struct Point {
     /// Add a vector to a point
     @safe pure nothrow @nogc
     Point opBinary(string s)(in Vector other) const if (s == "+") {
-        version(SIMD_X86_OR_X64) {
-            return Point(this.xyzw + other.xyzw);
-        } else {
-            return Point(
-                this.x + other.x,
-                this.y + other.y,
-                this.z + other.z
-            );
-        }
+        return Point(this.x + other.x, this.y + other.y, this.z + other.z);
     }
 
     /// Subtract two points and yield a vector.
     @safe pure nothrow @nogc
     Vector opBinary(string s)(in Point other) const if (s == "-") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(this.xyzw - other.xyzw);
-        } else {
-            return Vector(
-                this.x - other.x,
-                this.y - other.y,
-                this.z - other.z
-            );
-        }
+        return Vector(this.x - other.x, this.y - other.y, this.z - other.z);
     }
 }
 
@@ -211,39 +65,19 @@ struct Vector {
     /// Negate a vector.
     @safe pure nothrow @nogc
     Vector opUnary(string s)() const if (s == "-") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(-this.xyzw);
-        } else {
-            return Vector(-this.x, -this.y, -this.z);
-        }
+        return Vector(-this.x, -this.y, -this.z);
     }
 
     /// Add a vector to a vector
     @safe pure nothrow @nogc
     Vector opBinary(string s)(in Vector other) const if (s == "+") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(this.xyzw + other.xyzw);
-        } else {
-            return Vector(
-                this.x + other.x,
-                this.y + other.y,
-                this.z + other.z
-            );
-        }
+        return Vector(this.x + other.x, this.y + other.y, this.z + other.z);
     }
 
     /// Subtract two vectors and yield a vector.
     @safe pure nothrow @nogc
     Vector opBinary(string s)(in Vector other) const if (s == "-") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(this.xyzw - other.xyzw);
-        } else {
-            return Vector(
-                this.x - other.x,
-                this.y - other.y,
-                this.z - other.z
-            );
-        }
+        return Vector(this.x - other.x, this.y - other.y, this.z - other.z);
     }
 
     /**
@@ -256,34 +90,12 @@ struct Vector {
      */
     @safe pure nothrow @nogc
     Vector opBinary(string s)(in float scalar) const if (s == "*") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(cast(float4) this.xyzw * loadScalar(scalar));
-        } else {
-            return Vector(
-                this.x * scalar,
-                this.y * scalar,
-                this.z * scalar
-            );
-        }
-    }
-
-    /// ditto
-    version(SIMD)
-    @safe pure nothrow @nogc
-    Vector opBinary(string s)(in float4 scalar) const if (s == "*") {
-        return Vector(cast(float4) this.xyzw * cast(float4) scalar);
+        return Vector(this.x * scalar, this.y * scalar, this.z * scalar);
     }
 
     /// ditto
     @safe pure nothrow @nogc
     Vector opBinaryRight(string s)(in float scalar) const if (s == "*") {
-        return this * scalar;
-    }
-
-    /// ditto
-    version(SIMD)
-    @safe pure nothrow @nogc
-    Vector opBinaryRight(string s)(in float4 scalar) const if (s == "*") {
         return this * scalar;
     }
 
@@ -297,18 +109,7 @@ struct Vector {
      */
     @safe pure nothrow @nogc
     float opBinary(string s)(in Vector other) const if (s == "*") {
-        version(SIMD_X86_OR_X64) {
-            float4 multResult = this.xyzw * other.xyzw;
-
-            // Shuffle and add to get x + y + z.
-            float4 result = multResult
-                + shuffle!1(multResult)
-                + shuffle!2(multResult);
-
-            return result.array[0];
-        } else {
-            return this.x * other.x + this.y * other.y + this.z * other.z;
-        }
+        return this.x * other.x + this.y * other.y + this.z * other.z;
     }
 
     /**
@@ -321,22 +122,7 @@ struct Vector {
      */
     @safe pure nothrow @nogc
     Vector opBinary(string s)(in float scalar) const if (s == "/") {
-        version(SIMD_X86_OR_X64) {
-            return Vector(cast(float4) this.xyzw / loadScalar(scalar));
-        } else {
-            return Vector(
-                this.x / scalar,
-                this.y / scalar,
-                this.z / scalar
-            );
-        }
-    }
-
-    /// ditto
-    version(SIMD)
-    @safe pure nothrow @nogc
-    Vector opBinary(string s)(in float4 scalar) const if (s == "/") {
-        return Vector(cast(float4) this.xyzw / cast(float4) scalar);
+        return Vector(this.x / scalar, this.y / scalar, this.z / scalar);
     }
 
     /**
@@ -346,18 +132,10 @@ struct Vector {
      * scalar = A scalar multiplier.
      */
     @safe pure nothrow @nogc
-    void opOpAssign(string s)(in float scalar) if (s == "*")
-    out {
-        assert(this.xyzwArray[3] == 1f);
-    } body {
-        version(SIMD_X86_OR_X64) {
-            this.xyzw *= loadScalar(scalar);
-            this.resetW();
-        } else {
-            this.x *= scalar;
-            this.y *= scalar;
-            this.z *= scalar;
-        }
+    void opOpAssign(string s)(in float scalar) if (s == "*") {
+        this.x *= scalar;
+        this.y *= scalar;
+        this.z *= scalar;
     }
 
     /**
@@ -367,18 +145,10 @@ struct Vector {
      * scalar = A scalar divisor.
      */
     @safe pure nothrow @nogc
-    void opOpAssign(string s)(in float scalar) if (s == "/")
-    out {
-        assert(this.xyzwArray[3] == 1f);
-    } body {
-        version(SIMD_X86_OR_X64) {
-            this.xyzw /= loadScalar(scalar);
-            this.resetW();
-        } else {
-            this.x /= scalar;
-            this.y /= scalar;
-            this.z /= scalar;
-        }
+    void opOpAssign(string s)(in float scalar) if (s == "/") {
+        this.x /= scalar;
+        this.y /= scalar;
+        this.z /= scalar;
     }
 }
 
@@ -508,8 +278,8 @@ unittest {
     immutable Vector q = p * 2f;
     immutable Vector r = 2f * p;
 
-    immutable Vector q2 = p * Scalar!2f;
-    immutable Vector r2 = Scalar!2f * p;
+    immutable Vector q2 = p * 2f;
+    immutable Vector r2 = 2f * p;
 
     assert(q.x == 2);
     assert(q.y == 4);
@@ -535,7 +305,7 @@ unittest {
     immutable p = Vector(2, 4, 6);
 
     immutable Vector q = p / 2f;
-    immutable Vector q2 = p / Scalar!2f;
+    immutable Vector q2 = p / 2f;
 
     assert(q.x == 1);
     assert(q.y == 2);
@@ -616,9 +386,6 @@ unittest {
 }
 
 
-// Some of the following unit tests will pretty much repeat the
-// implementations, but they are useful for testing the SIMD variations.
-
 /**
  * Compute the square of the length. (a.k.a. norm, magnitude)
  *
@@ -660,29 +427,7 @@ unittest {
  */
 @safe pure nothrow @nogc
 Vector normalize(in Vector vector) {
-    version(SIMD_X86_OR_X64) {
-        enum ubyte shiftYZX = 0b00_00_10_01;
-        enum ubyte shiftZXY = 0b00_01_00_10;
-
-        // For SIMD, we can keep everything in SIMD types all the way.
-        float4 multResult = vector.xyzw * vector.xyzw;
-
-        // Shift the elements around and add three vectors together so we
-        // can compute (x,y,z) + (y,z,x) + (z,x,y) and get the elements added
-        // together at the right co-ordinates.
-        float4 squareResult = multResult
-            + shuffle!shiftYZX(multResult)
-            + shuffle!shiftZXY(multResult);
-
-        // Apply the square root to every element at once, then
-        // use the result to divide every element at once.
-        return Vector(
-            cast(float4) vector.xyzw
-            / cast(float4) __simd(XMM.SQRTPS, squareResult)
-        );
-    } else {
-        return vector / length(vector);
-    }
+    return vector / length(vector);
 }
 
 unittest {
@@ -708,21 +453,11 @@ unittest {
  */
 @safe pure nothrow @nogc
 Vector cross(in Vector left, in Vector right) {
-    version(SIMD_X86_OR_X64) {
-        enum ubyte shiftYZX = 0b00_00_10_01;
-        enum ubyte shiftZXY = 0b00_01_00_10;
-
-        return Vector(
-            shuffle!shiftYZX(left.xyzw) * shuffle!shiftZXY(right.xyzw)
-            - shuffle!shiftZXY(left.xyzw) * shuffle!shiftYZX(right.xyzw)
-        );
-    } else {
-        return Vector(
-            left.y * right.z - left.z * right.y,
-            left.z * right.x - left.x * right.z,
-            left.x * right.y - left.y * right.x
-        );
-    }
+    return Vector(
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x
+    );
 }
 
 unittest {
@@ -766,3 +501,4 @@ unittest {
 
     assert(approxEqual(distance(p, q), expectedDistance));
 }
+
